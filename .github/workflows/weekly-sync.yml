@@ -1,0 +1,41 @@
+name: Weekly refresh of all cases
+
+# Refreshes every case (closed ones too, so a case reopened at Q2's end
+# doesn't sit stale) before your Wednesday sync-up, so the dashboard
+# reflects the latest portal status/comments walking into the meeting. Also
+# runnable by hand any time from the Actions tab.
+on:
+  schedule:
+    # 06:00 UTC every Wednesday. Adjust the hour for your timezone, or the
+    # day-of-week field (3 = Wed) if your sync-up moves.
+    - cron: "0 6 * * 3"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Re-sync all cases
+        env:
+          Q2_PORTAL_USER: ${{ secrets.Q2_PORTAL_USER }}
+          Q2_PORTAL_PASS: ${{ secrets.Q2_PORTAL_PASS }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          MS_DRIVE_ID: ${{ secrets.MS_DRIVE_ID }}
+          MS_FILE_ID: ${{ secrets.MS_FILE_ID }}
+        run: node scripts/scrape.js --all

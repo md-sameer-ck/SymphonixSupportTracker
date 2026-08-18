@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Folk2Folk × Q2 Symphonix — Support Cases Tracker</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="viz-root">
+<div class="wrap">
+
+  <div class="topbar">
+    <div>
+      <h1>Folk2Folk × Q2 Symphonix — Support Cases Tracker</h1>
+      <p class="subtitle">Live tracker: new cases auto-pull from the Q2 portal, your team adds weekly sync-up notes.</p>
+      <p class="meta" id="metaLine">Loading…</p>
+    </div>
+    <div class="topbar-actions">
+      <div class="btn" id="themeToggle">🌓 <span id="themeLabel">Auto</span></div>
+      <div class="btn" id="adminToggle">🔒 Admin</div>
+      <div class="btn primary" id="addCaseBtn">+ Add case</div>
+    </div>
+  </div>
+
+  <div class="sync-banner" id="syncBanner" style="display:none;"></div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="charts">
+    <div class="chart-card">
+      <p class="chart-title">Cases by status</p>
+      <div id="chartStatus"></div>
+    </div>
+    <div class="chart-card">
+      <p class="chart-title">Cases by priority</p>
+      <div id="chartPriority"></div>
+    </div>
+    <div class="chart-card">
+      <p class="chart-title">Cases by product category</p>
+      <div id="chartCategory"></div>
+    </div>
+  </div>
+
+  <div class="filters">
+    <input type="search" id="searchInput" placeholder="Search subject, description, notes…">
+    <select id="statusFilter"><option value="">All statuses</option></select>
+    <select id="priorityFilter"><option value="">All priorities</option></select>
+    <select id="categoryFilter"><option value="">All categories</option></select>
+    <button id="syncFilterToggle">🗓 Needs sync-up</button>
+    <button id="resetFilters">Reset</button>
+  </div>
+  <p class="result-count"><span id="resultCount"></span><span id="refreshHint" style="cursor:pointer;">↻ Refresh</span></p>
+
+  <div class="table-card">
+    <table>
+      <thead>
+        <tr>
+          <th data-key="case_number">Case # <span class="arrow"></span></th>
+          <th data-key="subject">Subject <span class="arrow"></span></th>
+          <th data-key="status">Status <span class="arrow"></span></th>
+          <th data-key="priority">Priority <span class="arrow"></span></th>
+          <th data-key="product_category">Category <span class="arrow"></span></th>
+          <th data-key="date_opened">Opened <span class="arrow"></span></th>
+          <th data-key="date_closed">Closed <span class="arrow"></span></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <footer>Folk2Folk internal tool · data sourced from the Q2 Customer Portal</footer>
+
+</div>
+</div>
+
+<!-- Admin unlock modal -->
+<div class="modal-backdrop" id="unlockModal" style="display:none;">
+  <div class="modal">
+    <h3>Unlock editing</h3>
+    <p class="error-text" id="unlockError" style="display:none;"></p>
+    <label>Admin passcode</label>
+    <input type="password" id="unlockInput" placeholder="Enter passcode">
+    <div class="modal-actions">
+      <button class="btn" id="unlockCancel">Cancel</button>
+      <button class="btn primary" id="unlockSubmit">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add case modal -->
+<div class="modal-backdrop" id="addCaseModal" style="display:none;">
+  <div class="modal">
+    <h3>Add a case</h3>
+    <p class="error-text" id="addCaseError" style="display:none;"></p>
+    <label>Case number (from the Q2 portal)</label>
+    <input type="text" id="addCaseNumber" placeholder="e.g. 04700000">
+    <label>Your summary (typed by you — everything else auto-pulls from the portal)</label>
+    <textarea id="addCaseSummary" rows="3" placeholder="One or two lines on what this case is about"></textarea>
+    <label>Your name (auto-filled from your login)</label>
+    <input type="text" id="addCaseAuthor" placeholder="e.g. Sameer">
+    <div class="modal-actions">
+      <button class="btn" id="addCaseCancel">Cancel</button>
+      <button class="btn primary" id="addCaseSubmit">Add &amp; pull from portal</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

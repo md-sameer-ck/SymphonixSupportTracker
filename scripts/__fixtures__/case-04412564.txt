@@ -1,0 +1,68 @@
+Close Window
+Print This Page
+Expand All | Collapse All
+Customer Portal 3.0
+
+Case: 04412564
+
+Case Information
+Subject High Priority – Reopening Case for Certificate Rate Change Reversal Error (Old Case ID: 04357799)
+Description Hi Team,
+
+We want to reopen case 04357799.
+
+We reversed the reschedule on the Contract and attempted to reverse the certificate rate change on the Investment Order as well.
+Steps to Reproduce
+
+Case Details
+Product Family Symphonix Sensitive Data
+
+Product Category
+Symphonix Loan Servicing Date & Time Issue Occurred
+23/09/2025 22:30
+Product
+Reschedule Users Impacted
+Product Other
+Case Number 04412564
+Recurrence
+Constant Urgency Medium – 3: There is an impact to your business, but your business continues to function
+Contact Name
+Anshu Kumari Mahato
+Additional Information
+Environment Type
+Production Salesforce Org ID
+00D4K000003ocTu
+Device Model / OS Version
+Login Access Granted?
+Acknowledge Changes
+Are ACH, EOD, Wire Processes prevented?
+Device User Id / Logon Id
+
+Type System Bug Owner of Case Rohit Datta
+Date/Time Opened 23/09/2025 13:59 Date/Time Closed 12/05/2026 13:38
+System Information
+Priority Medium Status 90-Closed
+Case Origin
+Web Sub-Status
+Pending Product - Bug
+Account Name
+Folk2Folk Limited Case Solution
+
+Record Type ID 012800000003VEx Contact Phone 8867480332
+Contact Email anshu.mahato@cloudkaptan.com
+Case Comments
+12/05/2026 13:38
+User Rohit Datta
+Comment Hi Team,
+
+As we have provided the patch fix for the issue, we are proceeding with case closure.
+
+Case Number: 04412564
+06/05/2026 12:30
+User Rohit Datta
+Comment Hi Team,
+
+Kindly install the below patch
+Attachments
+Q2 Loan Servicing and Q2 Marketplace Release Notes December 2023 (8)
+Size 2.24MB

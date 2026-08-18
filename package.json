@@ -1,0 +1,23 @@
+{
+  "name": "symphonix-support-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Folk2Folk internal tracker for Q2 Symphonix support cases — Netlify site + Functions backed by Turso, with a GitHub Actions scraper for the Q2 customer portal.",
+  "scripts": {
+    "seed": "node scripts/seed-from-json.js",
+    "seed:turso": "node scripts/turso-init.js",
+    "scrape": "node scripts/scrape.js",
+    "test": "node scripts/parseCaseText.test.js",
+    "dev": "node scripts/dev-server.js"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.14.0"
+  },
+  "devDependencies": {
+    "exceljs": "^4.4.0",
+    "playwright": "^1.47.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

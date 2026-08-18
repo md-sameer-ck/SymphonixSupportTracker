@@ -1,0 +1,61 @@
+Close Window
+Print This Page
+Expand All | Collapse All
+Customer Portal 3.0
+
+Case: 04645897
+
+Case Information
+Subject Quick Quote Lightning Page
+Description We have overridden the default View behaviour for the managed genesis__Quick_Quotes__c object so that Quick Quote records open on our custom Lightning Record Page, which contains the standard Salesforce Record Detail component on the Details tab.
+
+The standard Edit action works, and the user has edit access to the object, record, and fields.
+Steps to Reproduce
+
+Case Details
+Product Family Symphonix Sensitive Data
+
+Product Category
+Symphonix Origination Date & Time Issue Occurred
+
+Product
+Quick Quote Users Impacted
+Product Other
+Case Number 04645897
+Recurrence
+Constant Urgency Medium – 3: There is an impact to your business, but your business continues to function
+Contact Name
+Daniel Learmont
+Additional Information
+Environment Type
+Production Salesforce Org ID
+00DUF000007chJG
+Device Model / OS Version
+Login Access Granted?
+Acknowledge Changes
+Are ACH, EOD, Wire Processes prevented?
+Device User Id / Logon Id
+
+Type Custom Code/Troubleshooting Owner of Case Rohit Datta
+Date/Time Opened 22/06/2026 20:21 Date/Time Closed 05/08/2026 18:40
+System Information
+Priority Low Status 90-Closed
+Case Origin
+Web Sub-Status
+Pending Partner Services
+Account Name
+Folk2Folk Limited Case Solution
+Provided a workaround suggested by Salesforce team.
+Record Type ID 012800000003VEx Contact Phone 07391 239815
+Contact Email daniellearmont@folk2folk.com
+Case Comments
+05/08/2026 18:30
+User Rohit Datta
+Comment Hi Daniel,
+
+Based on the current use case of leveraging a custom Lightning Record Page, we recommend implementing a custom component.
+
+Case Number: 04645897
+Attachments
+image-20260801-103626
+Size 333KB

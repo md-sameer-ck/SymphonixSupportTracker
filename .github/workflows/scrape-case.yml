@@ -1,0 +1,45 @@
+name: Scrape one case from Q2 portal
+
+# Fired by netlify/functions/cases.js (and case-update.js's "Refresh from
+# portal" action) via a repository_dispatch call, and can also be run by
+# hand from the Actions tab for testing.
+on:
+  repository_dispatch:
+    types: [scrape-case]
+  workflow_dispatch:
+    inputs:
+      case_number:
+        description: "Case number to scrape, e.g. 04700000"
+        required: true
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run scraper
+        env:
+          Q2_PORTAL_USER: ${{ secrets.Q2_PORTAL_USER }}
+          Q2_PORTAL_PASS: ${{ secrets.Q2_PORTAL_PASS }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          MS_DRIVE_ID: ${{ secrets.MS_DRIVE_ID }}
+          MS_FILE_ID: ${{ secrets.MS_FILE_ID }}
+        run: |
+          CASE_NUMBER="${{ github.event.client_payload.case_number || github.event.inputs.case_number }}"
+          echo "Scraping case $CASE_NUMBER"
+          node scripts/scrape.js "$CASE_NUMBER"

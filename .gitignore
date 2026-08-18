@@ -1,0 +1,5 @@
+node_modules/
+data/local-cases.json
+data/local-comments.json
+.env
+*.log
