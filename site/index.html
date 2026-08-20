@@ -18,6 +18,7 @@
     </div>
     <div class="topbar-actions">
       <div class="btn" id="themeToggle">🌓 <span id="themeLabel">Auto</span></div>
+      <button class="btn" id="syncAllBtn" title="Re-pull every case from the Q2 portal now, instead of waiting for the Wednesday refresh">🔄 Sync all</button>
       <div class="btn" id="adminToggle">🔒 Admin</div>
       <div class="btn primary" id="addCaseBtn">+ Add case</div>
     </div>
@@ -128,8 +129,15 @@
         <option value="mention">Case-number mentions only</option>
         <option value="entity">Shared loan account / transaction only</option>
       </select>
+      <button id="graphToggle" title="Show each cluster as a diagram">◉ Diagram</button>
       <button id="relatedReset">Reset</button>
     </div>
+    <p class="graph-legend">
+      <span><span class="lg-line"></span> mentions (arrow points at the case being cited)</span>
+      <span><span class="lg-line dashed"></span> shares a loan account / transaction</span>
+      <span><span class="lg-dot ring"></span> still open</span>
+      <span>Bigger circle = more links · click any node to open the case</span>
+    </p>
     <div id="relatedStats" class="digest-grid"></div>
     <div id="relatedClusters"></div>
     <div id="relatedUntracked"></div>

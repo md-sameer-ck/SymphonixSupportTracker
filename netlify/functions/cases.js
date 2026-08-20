@@ -14,31 +14,8 @@
 
 const { json, handleOptions } = require("./_http");
 const { requirePasscode } = require("./_auth");
+const { triggerScrape } = require("./_dispatch");
 const graph = require("../../lib/store");
-
-async function triggerScrape(caseNumber) {
-  const { GITHUB_DISPATCH_TOKEN, GITHUB_REPO } = process.env;
-  if (!GITHUB_DISPATCH_TOKEN || !GITHUB_REPO) {
-    return { dispatched: false, reason: "GITHUB_DISPATCH_TOKEN/GITHUB_REPO not configured" };
-  }
-  const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/dispatches`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${GITHUB_DISPATCH_TOKEN}`,
-      Accept: "application/vnd.github+json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      event_type: "scrape-case",
-      client_payload: { case_number: caseNumber },
-    }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    return { dispatched: false, reason: `GitHub dispatch failed (${res.status}): ${text}` };
-  }
-  return { dispatched: true };
-}
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return handleOptions();

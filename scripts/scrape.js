@@ -86,6 +86,34 @@ async function resolveRecordId(page, caseNumber) {
   return match[1];
 }
 
+// Pulls real download hrefs for the case's files out of the live DOM. The
+// printable view's flattened text gives filenames and sizes but no URLs, so
+// this is the only place a clickable attachment link can come from.
+//
+// ADJUST IF NEEDED: Salesforce serves attachments as ContentDocument /
+// ContentDistribution links, and the exact anchor markup varies by community
+// theme. Anything found is matched back to a parsed filename; anything not
+// found simply has no URL and the dashboard falls back to linking the case
+// page itself, so a miss here degrades rather than breaks.
+async function collectAttachmentUrls(page) {
+  try {
+    return await page.evaluate(() => {
+      const out = {};
+      const anchors = Array.from(document.querySelectorAll("a[href]"));
+      anchors.forEach((a) => {
+        const href = a.getAttribute("href") || "";
+        if (!/sfc\/servlet|ContentDocument|contentdocument|\/sfsites\/c\/file-asset|download/i.test(href)) return;
+        const label = (a.textContent || "").trim();
+        if (label) out[label] = new URL(href, window.location.origin).toString();
+      });
+      return out;
+    });
+  } catch (err) {
+    console.warn(`  (could not read attachment links: ${err.message})`);
+    return {};
+  }
+}
+
 async function scrapeOne(page, caseNumber) {
   const recordId = await resolveRecordId(page, caseNumber);
   const url = `https://customerportal.q2.com/customerportal/${recordId}/p`;
@@ -94,13 +122,25 @@ async function scrapeOne(page, caseNumber) {
   const text = await page.evaluate(() => document.body.innerText);
 
   const parsed = parseCaseText(text);
+  const attachmentUrls = parsed.attachments.length ? await collectAttachmentUrls(page) : {};
+  const attachments = parsed.attachments.map((a) => ({ ...a, url: attachmentUrls[a.name] || "" }));
+
   await graph.upsertCase(caseNumber, {
     ...parsed,
+    // Arrays have to be serialised — every backend column is TEXT.
+    portal_comments: JSON.stringify(parsed.portal_comments),
+    attachments: JSON.stringify(attachments),
+    // Stored so the dashboard can link straight back to this case on the
+    // portal; the case number alone can't address a page there.
+    portal_record_id: recordId,
     sync_status: "synced",
     last_synced_at: new Date().toISOString(),
     sync_error: "", // cleared on success so a fixed case stops showing as failed
   });
-  console.log(`Synced ${caseNumber}: ${parsed.subject}`);
+  console.log(
+    `Synced ${caseNumber}: ${parsed.subject} ` +
+      `(${parsed.portal_comments.length} comment(s), ${attachments.length} attachment(s))`
+  );
 }
 
 // Records the failure on the case itself, so the dashboard can show *why* a

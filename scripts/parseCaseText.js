@@ -84,13 +84,101 @@ function splitSections(text) {
     commentsIdx === -1
       ? ""
       : text.slice(commentsIdx, attachmentsIdx === -1 ? text.length : attachmentsIdx);
+  const attachments = attachmentsIdx === -1 ? "" : text.slice(attachmentsIdx);
 
-  return { header, details, comments };
+  return { header, details, comments, attachments };
+}
+
+// Splits the Case Comments section into individual entries. The section is a
+// flat run of repeating three-part blocks:
+//
+//   12/05/2026 13:38
+//   User Rohit Datta
+//   Comment Hi Team, …possibly many paragraphs…
+//
+// Kept as a line walk rather than one big regex because a comment body can
+// contain anything at all — including lines that look like the next block's
+// date — and only a date on its own line, followed by a "User" line, actually
+// starts a new comment. A case with 100 comments is otherwise a single
+// unreadable wall of text.
+const COMMENT_DATE_RE = /^(\d{1,2}\/\d{1,2}\/\d{4}(?:\s+\d{1,2}:\d{2})?)\s*$/;
+
+function parsePortalComments(section) {
+  const lines = section.replace(/^Case Comments\s*/i, "").split("\n");
+  const entries = [];
+  let current = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const dateMatch = line.match(COMMENT_DATE_RE);
+    // Only treat a bare date as a new comment when a "User" line follows it,
+    // so a date sitting on its own inside a comment body doesn't split it.
+    if (dateMatch && /^User\b/i.test(lines[i + 1] || "")) {
+      if (current) entries.push(current);
+      current = { timestamp: dateMatch[1].trim(), author: "", comment: "" };
+      continue;
+    }
+    if (!current) continue;
+    if (!current.author && /^User\b/i.test(line)) {
+      current.author = line.replace(/^User\s*/i, "").trim();
+      continue;
+    }
+    if (/^Comment\b/i.test(line) && !current._body) {
+      current._body = true;
+      current.comment = line.replace(/^Comment\s*/i, "");
+      continue;
+    }
+    if (current._body) current.comment += "\n" + line;
+  }
+  if (current) entries.push(current);
+
+  return entries
+    .map((e) => {
+      delete e._body;
+      // Every portal comment ends with the case's own number as a mail-footer
+      // artefact; it carries no information and only adds noise per comment.
+      e.comment = e.comment.replace(/\n*Case Number:\s*\d+\s*$/i, "").trim();
+      return e;
+    })
+    .filter((e) => e.comment || e.author);
+}
+
+// The Attachments section lists a filename then its size, repeating:
+//
+//   Attachments
+//   image-20260801-103626
+//   Size 333KB
+//
+// The printable view gives no download URL in text form, so only name and
+// size come from here — scrape.js separately tries to pull real hrefs out of
+// the live DOM and merges them in by filename.
+function parseAttachments(section) {
+  const lines = section
+    .replace(/^Attachments\s*/i, "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const sizeMatch = lines[i].match(/^Size\s+(.+)$/i);
+    if (sizeMatch) {
+      if (out.length) out[out.length - 1].size = sizeMatch[1].trim();
+      continue;
+    }
+    out.push({ name: lines[i], size: "" });
+  }
+  return out;
+}
+
+// Filenames the portal generates for pasted screenshots (image-<date>-<time>)
+// plus anything with an obvious image extension.
+function isImageAttachment(name) {
+  return /\.(png|jpe?g|gif|bmp|webp|svg|tiff?)$/i.test(name) || /^image-\d{8}-\d{6}$/i.test(name);
 }
 
 function parseCaseText(rawText) {
   const text = rawText.replace(/\r/g, "");
-  const { header, details, comments } = splitSections(text);
+  const { header, details, comments, attachments } = splitSections(text);
 
   const subject = grab(header, "Subject", ["Description", "Steps to Reproduce"]);
   const description = grab(header, "Description", ["Steps to Reproduce", "Case Details"]);
@@ -113,10 +201,21 @@ function parseCaseText(rawText) {
   const accountName = firstLine(grab(details, "Account Name", ["Case Solution"]));
 
   const rawComments = comments.replace(/^Case Comments\s*/i, "").trim();
+  const portalComments = parsePortalComments(comments);
+  const attachmentList = parseAttachments(attachments).map((a) => ({
+    ...a,
+    is_image: isImageAttachment(a.name),
+  }));
 
   return {
     subject,
     description,
+    // Structured alongside the raw blob rather than replacing it: the original
+    // 115 seeded cases hold hand-written "FIX:/DISCUSSION:" text in
+    // raw_comments that this parser can't produce, and the dashboard falls
+    // back to rendering that whenever the structured list is empty.
+    portal_comments: portalComments,
+    attachments: attachmentList,
     product_category: productCategory,
     product,
     urgency,
@@ -133,4 +232,4 @@ function parseCaseText(rawText) {
   };
 }
 
-module.exports = { parseCaseText };
+module.exports = { parseCaseText, parsePortalComments, parseAttachments, isImageAttachment };

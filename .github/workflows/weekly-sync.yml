@@ -10,6 +10,16 @@ on:
     # day-of-week field (3 = Wed) if your sync-up moves.
     - cron: "0 6 * * 3"
   workflow_dispatch: {}
+  # Fired by netlify/functions/sync-all.js when someone clicks "Sync all" on
+  # the dashboard, so a full refresh doesn't have to wait for the cron.
+  repository_dispatch:
+    types: [scrape-all]
+
+# One full refresh at a time. Two overlapping runs would both drive the same
+# portal login and race each other's writes for every case.
+concurrency:
+  group: full-portal-sync
+  cancel-in-progress: false
 
 jobs:
   sync:

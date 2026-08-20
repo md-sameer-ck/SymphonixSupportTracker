@@ -6,6 +6,38 @@
   var API_CASE_UPDATE = "/api/case-update";
   var API_COMMENTS = "/api/comments";
   var API_AUTH_CHECK = "/api/auth-check";
+  var API_SYNC_ALL = "/api/sync-all";
+
+  // Where a case lives on the Q2 portal. The record-view path is the standard
+  // Salesforce Experience Cloud one; "/p" (the printable view the scraper
+  // reads) is definitely valid on this base, so if your community routes
+  // record pages differently, PORTAL_CASE_PATH is the single line to change.
+  var PORTAL_BASE = "https://customerportal.q2.com/customerportal";
+  var PORTAL_CASE_PATH = "/view";
+  var PORTAL_CASE_LIST = PORTAL_BASE + "/s/support-cases?Case-filterId=All_Cases_Open_or_Closed";
+
+  // Login persists across browser restarts (localStorage) rather than dying
+  // with the tab (sessionStorage). This is a shared team passcode on an
+  // internal tool, and re-entering it every morning was the bigger problem.
+  var STORE_KEY_PASSCODE = "f2f_admin_passcode";
+  var STORE_KEY_NAME = "f2f_admin_name";
+
+  function readStored(key) {
+    try {
+      // Migrate anyone mid-session from the old sessionStorage-only behaviour.
+      var legacy = sessionStorage.getItem(key);
+      if (legacy && !localStorage.getItem(key)) localStorage.setItem(key, legacy);
+      return localStorage.getItem(key);
+    } catch (e) {
+      return null; // private mode / storage disabled — just don't persist
+    }
+  }
+  function writeStored(key, value) {
+    try { localStorage.setItem(key, value); } catch (e) {}
+  }
+  function clearStored(key) {
+    try { localStorage.removeItem(key); sessionStorage.removeItem(key); } catch (e) {}
+  }
 
   var STATUS_LABELS = {
     "90-Closed": "Closed",
@@ -40,11 +72,15 @@
     view: "cases",
     expandedCase: null,
     sort: { key: "case_number", dir: "desc" },
-    adminPasscode: sessionStorage.getItem("f2f_admin_passcode") || null,
-    adminName: sessionStorage.getItem("f2f_admin_name") || "",
+    adminPasscode: readStored(STORE_KEY_PASSCODE) || null,
+    adminName: readStored(STORE_KEY_NAME) || "",
     syncFilterOnly: false,
     agedFilterOnly: false,
     linkedFilterOnly: false,
+    expandedThreads: {},   // case_number -> showing the full portal thread
+    expandedEdges: {},     // cluster index -> its written-out link list is open
+    editingComment: null,  // id of the weekly note currently being edited
+    graphMode: true,       // Related view: diagram vs plain link list
   };
 
   // ---------- Theme ----------
@@ -109,6 +145,27 @@
 
   function isClosed(r) { return r.status === "90-Closed"; }
 
+  // Direct link back to the case on the Q2 portal. Needs the Salesforce record
+  // ID, which only arrives with a scrape — cases seeded before that (or never
+  // successfully synced) fall back to the portal's case list, where the number
+  // can be searched.
+  function portalUrl(r) {
+    return r.portal_record_id ? PORTAL_BASE + "/" + r.portal_record_id + PORTAL_CASE_PATH : null;
+  }
+
+  // Columns holding JSON arrays are TEXT everywhere, and a case that has never
+  // synced has "" rather than "[]" — so every read goes through this.
+  function parseJsonArray(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    try {
+      var parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
   function median(nums) {
     if (!nums.length) return null;
     var s = nums.slice().sort(function (a, b) { return a - b; });
@@ -131,8 +188,90 @@
       r.age_days = opened ? daysBetween(opened, isClosed(r) && closed ? closed : now) : null;
       r._syncedAt = r.last_synced_at ? new Date(r.last_synced_at) : null;
       if (r._syncedAt && isNaN(r._syncedAt.getTime())) r._syncedAt = null;
+      r._portalComments = parseJsonArray(r.portal_comments);
+      r._attachments = parseJsonArray(r.attachments);
     });
     return cases;
+  }
+
+  // ---------- Portal comment thread ----------
+  // Rendered as a list of individual comments, newest first, with only the
+  // first few expanded. A busy case can carry a hundred portal comments, which
+  // as one pre-wrapped text blob is unreadable and buries everything below it.
+  var THREAD_PREVIEW = 3;
+
+  function renderPortalThread(r) {
+    var thread = r._portalComments;
+    if (!thread.length) {
+      // The original 115 seeded cases hold hand-written "FIX:/DISCUSSION:"
+      // text in raw_comments that the parser can't produce, so that blob is
+      // still the fallback — and a re-sync upgrades them to the structured list.
+      if (r.raw_comments) {
+        return '<p class="thread-fallback">' + escapeHtml(r.raw_comments) + "</p>" +
+          '<p class="thread-hint">This case predates structured comment parsing — "🔄 Refresh from portal" ' +
+          "will split it into individual comments.</p>";
+      }
+      return '<p style="color:var(--text-muted); font-size:12px;">Not synced yet.</p>';
+    }
+
+    var expanded = STATE.expandedThreads[r.case_number];
+    var shown = expanded ? thread : thread.slice(0, THREAD_PREVIEW);
+    var hidden = thread.length - shown.length;
+
+    return (
+      '<div class="thread-meta">' + plural(thread.length, "comment") + " from the portal" +
+        (thread[0] && thread[0].timestamp ? ' · latest ' + escapeHtml(thread[0].timestamp) : "") +
+      "</div>" +
+      '<div class="thread">' +
+        shown.map(function (c, i) {
+          return '<div class="thread-item">' +
+            '<div class="thread-head">' +
+              '<span class="thread-author">' + escapeHtml(c.author || "Unknown") + "</span>" +
+              '<span class="thread-when">' + escapeHtml(c.timestamp || "") + "</span>" +
+            "</div>" +
+            '<div class="thread-text">' + escapeHtml(c.comment) + "</div>" +
+          "</div>";
+        }).join("") +
+      "</div>" +
+      (hidden > 0 || expanded
+        ? '<button class="btn small" data-action="toggle-thread" data-case="' + escapeHtml(r.case_number) + '">' +
+            (expanded ? "Show fewer" : "Show all " + thread.length + " comments") +
+          "</button>"
+        : "")
+    );
+  }
+
+  // ---------- Attachments ----------
+  // The portal's printable text gives filenames and sizes but no URLs, so a
+  // direct href only exists when the scraper managed to read one out of the
+  // live DOM. Without it the link goes to the case page, which is where the
+  // file is — one extra click rather than a dead end.
+  function renderAttachments(r) {
+    var files = r._attachments;
+    if (!files.length) return "";
+    var caseLink = portalUrl(r);
+    var images = files.filter(function (f) { return f.is_image; }).length;
+    return '<div class="detail-block" style="grid-column: 1 / -1;">' +
+      "<h4>Attachments <span class=\"muted\">· " + plural(files.length, "file") +
+        (images ? ", " + images + " image" + (images === 1 ? "" : "s") : "") + "</span></h4>" +
+      '<div class="attach-row">' +
+        files.map(function (f) {
+          var href = f.url || caseLink;
+          var label = (f.is_image ? "🖼" : "📎") + " " + f.name + (f.size ? " · " + f.size : "");
+          if (!href) {
+            return '<span class="attach-chip disabled" title="No link available until this case is re-synced">' +
+              escapeHtml(label) + "</span>";
+          }
+          return '<a class="attach-chip" href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer"' +
+            ' title="' + escapeHtml(f.url ? "Open the file on the Q2 portal" : "Opens the case on the Q2 portal — the file is in its Attachments section") + '">' +
+            escapeHtml(label) + (f.url ? "" : ' <span class="muted">↗ case</span>') + "</a>";
+        }).join("") +
+      "</div>" +
+      (files.some(function (f) { return !f.url; })
+        ? '<p class="thread-hint">Files without a direct link open the case on the portal instead — ' +
+          "you need to be signed in to the portal either way.</p>"
+        : "") +
+    "</div>";
   }
 
   function isAgeing(r) {
@@ -276,6 +415,256 @@
     return clusters.sort(function (a, b) { return b.members.length - a.members.length; });
   }
 
+  // ---------- Cluster diagram ----------
+  // A small force-directed layout per cluster, drawn as inline SVG. One
+  // diagram per cluster rather than one giant graph of everything: a cluster
+  // is the unit you actually reason about ("111 links 222, and 222 is also in
+  // 333 and 444"), and 76 linked cases in a single picture is a hairball.
+  //
+  // Plain spring-electrical relaxation — repulsion between every pair,
+  // attraction along edges, cooling step size. Deterministic: nodes start on a
+  // circle by index, so the same cluster always draws the same way instead of
+  // rearranging on every render.
+  var RENDER_WIDTH = 900;   // canonical layout width; 1 unit ≈ 1 rendered pixel
+  var NODE_R_MIN = 7;
+  var NODE_R_MAX = 14;
+
+  function layoutCluster(members, edges, width, height) {
+    var n = members.length;
+    var idx = {};
+    members.forEach(function (m, i) { idx[m] = i; });
+
+    var cx = width / 2, cy = height / 2;
+    var radius = Math.min(width, height) * 0.34;
+    var pos = members.map(function (m, i) {
+      var a = (2 * Math.PI * i) / n;
+      return { x: cx + radius * Math.cos(a), y: cy + radius * Math.sin(a) };
+    });
+    if (n === 1) return pos;
+
+    var links = edges.map(function (e) { return [idx[e.a], idx[e.b]]; });
+    // Ideal edge length. These link graphs are mostly trees — few cycles — and
+    // a tree under weak repulsion collapses into a thin snake that wastes the
+    // canvas and stacks labels on top of each other. Strong repulsion plus a
+    // long, slow cool spreads it into two dimensions instead.
+    var k = Math.sqrt((width * height) / n) * 0.9;
+    var iterations = 520;
+    var step = k * 0.5;
+
+    for (var it = 0; it < iterations; it++) {
+      var dx = new Array(n).fill(0);
+      var dy = new Array(n).fill(0);
+
+      for (var i = 0; i < n; i++) {
+        for (var j = i + 1; j < n; j++) {
+          var ax = pos[i].x - pos[j].x;
+          var ay = pos[i].y - pos[j].y;
+          var d2 = ax * ax + ay * ay;
+          if (d2 < 0.01) { ax = (i - j) * 0.1 + 0.05; ay = 0.05; d2 = ax * ax + ay * ay; }
+          var d = Math.sqrt(d2);
+          var rep = (k * k) / d;
+          dx[i] += (ax / d) * rep; dy[i] += (ay / d) * rep;
+          dx[j] -= (ax / d) * rep; dy[j] -= (ay / d) * rep;
+        }
+      }
+      links.forEach(function (l) {
+        var a = l[0], b = l[1];
+        var lx = pos[a].x - pos[b].x;
+        var ly = pos[a].y - pos[b].y;
+        var d = Math.sqrt(lx * lx + ly * ly) || 0.01;
+        var att = (d * d) / k;
+        dx[a] -= (lx / d) * att; dy[a] -= (ly / d) * att;
+        dx[b] += (lx / d) * att; dy[b] += (ly / d) * att;
+      });
+      // Gentle pull to centre so disconnected-ish nodes don't drift away.
+      for (var c = 0; c < n; c++) {
+        dx[c] += (cx - pos[c].x) * 0.012;
+        dy[c] += (cy - pos[c].y) * 0.012;
+      }
+
+      for (var p = 0; p < n; p++) {
+        var len = Math.sqrt(dx[p] * dx[p] + dy[p] * dy[p]) || 1;
+        var move = Math.min(len, step);
+        pos[p].x += (dx[p] / len) * move;
+        pos[p].y += (dy[p] / len) * move;
+      }
+      step *= 0.992;
+    }
+
+    // Rotate the finished layout so its longest axis runs horizontally. The
+    // relaxation has no preferred orientation, so a chain of cases would just
+    // as happily settle on a diagonal — which gives a near-square bounding box
+    // and therefore a tall, mostly-empty diagram in a wide card. Aligning the
+    // principal axis (the 2D covariance eigenvector) with x makes every
+    // cluster read left-to-right and keeps the card short.
+    var mx = 0, my = 0;
+    pos.forEach(function (p) { mx += p.x; my += p.y; });
+    mx /= n; my /= n;
+    var cxx = 0, cyy = 0, cxy = 0;
+    pos.forEach(function (p) {
+      var ax = p.x - mx, ay = p.y - my;
+      cxx += ax * ax; cyy += ay * ay; cxy += ax * ay;
+    });
+    var theta = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
+    var cos = Math.cos(-theta), sin = Math.sin(-theta);
+    pos.forEach(function (p) {
+      var ax = p.x - mx, ay = p.y - my;
+      p.x = mx + ax * cos - ay * sin;
+      p.y = my + ax * sin + ay * cos;
+    });
+
+    // Normalise to a canonical width so one user unit is roughly one rendered
+    // pixel. Everything downstream — radii, font size, minimum separation —
+    // is then a plain pixel number in the same space, instead of the layout
+    // and the drawing each having their own scale (which previously let the
+    // separation pass enforce a gap smaller than the circles it was
+    // separating).
+    var xs0 = pos.map(function (p) { return p.x; });
+    var ys0 = pos.map(function (p) { return p.y; });
+    var w0 = Math.max.apply(null, xs0) - Math.min.apply(null, xs0);
+    var h0 = Math.max.apply(null, ys0) - Math.min.apply(null, ys0);
+    var scale = w0 > 1 ? RENDER_WIDTH / w0 : 1;
+    // Don't let a tall, narrow cluster overflow vertically once widened.
+    if (h0 * scale > RENDER_WIDTH * 0.62) scale = (RENDER_WIDTH * 0.62) / h0;
+    pos.forEach(function (p) { p.x *= scale; p.y *= scale; });
+
+    // Now push apart any pair still closer than two full node radii plus a
+    // little breathing room. In pixel space this is a fixed number.
+    var minGap = 2 * NODE_R_MAX + 8;
+    for (var pass = 0; pass < 200; pass++) {
+      var moved = false;
+      for (var i2 = 0; i2 < n; i2++) {
+        for (var j2 = i2 + 1; j2 < n; j2++) {
+          var ox = pos[j2].x - pos[i2].x;
+          var oy = pos[j2].y - pos[i2].y;
+          var od = Math.sqrt(ox * ox + oy * oy) || 0.01;
+          if (od >= minGap) continue;
+          var push = (minGap - od) / 2;
+          pos[i2].x -= (ox / od) * push; pos[i2].y -= (oy / od) * push;
+          pos[j2].x += (ox / od) * push; pos[j2].y += (oy / od) * push;
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+
+    return pos;
+  }
+
+  function clusterDiagram(cluster, rel) {
+    var members = cluster.members;
+    var n = members.length;
+    // The layout runs in a nominal square and the viewBox is then fitted to
+    // whatever shape it actually settled into. Forcing a fixed box instead
+    // meant a wide, flat cluster — which most of these are, being near-trees —
+    // sat in a deep band of empty space.
+    var span = 300 + Math.sqrt(n) * 180;
+    var pos = layoutCluster(members, cluster.edges, span, span);
+    var at = {};
+    members.forEach(function (m, i) { at[m] = pos[i]; });
+
+    var degree = {};
+    cluster.edges.forEach(function (e) {
+      degree[e.a] = (degree[e.a] || 0) + 1;
+      degree[e.b] = (degree[e.b] || 0) + 1;
+    });
+    var maxDeg = Math.max.apply(null, members.map(function (m) { return degree[m] || 0; }).concat([1]));
+
+    // layoutCluster already normalised positions to pixel space, so radii,
+    // font sizes and padding below are plain pixel numbers.
+
+    var edgeSvg = cluster.edges.map(function (e) {
+      var a = at[e.a], b = at[e.b];
+      var aMentionsB = (rel.mentions[e.a] || []).indexOf(e.b) !== -1;
+      var bMentionsA = (rel.mentions[e.b] || []).indexOf(e.a) !== -1;
+      // Mentions are solid and get an arrowhead on the cited end; a shared
+      // loan/transaction is a dashed undirected line, since neither case
+      // points at the other.
+      var mention = !!e.kinds.mention;
+      var title = e.a + (mention ? (aMentionsB && bMentionsA ? " ⇄ " : aMentionsB ? " → " : " ← ") : " ⇄ ") + e.b +
+        (mention ? (aMentionsB && bMentionsA ? " mention each other" : " mentions") : "") +
+        (e.kinds.entity ? (mention ? "; also share " : " share ") + e.entities.join(", ") : "");
+      // Draw the arrow from citer to cited so direction reads off the picture.
+      var from = mention && !aMentionsB ? b : a;
+      var to = mention && !aMentionsB ? a : b;
+      return '<line x1="' + from.x.toFixed(1) + '" y1="' + from.y.toFixed(1) +
+        '" x2="' + to.x.toFixed(1) + '" y2="' + to.y.toFixed(1) + '"' +
+        ' class="g-edge' + (mention ? "" : " entity") + (mention && aMentionsB && bMentionsA ? " mutual" : "") + '"' +
+        ' stroke-width="1.6" stroke-dasharray="' + (mention ? "none" : "5 4") + '"' +
+        (mention ? ' marker-end="url(#garrow)"' : "") +
+        "><title>" + escapeHtml(title) + "</title></line>";
+    }).join("");
+
+    // Not every circle can carry its case number — in a dense cluster the
+    // numbers land on top of each other. Rather than a blunt "only hubs get
+    // labels" rule, walk the nodes most-connected first and keep a label only
+    // when its box doesn't collide with one already placed. That labels as many
+    // as genuinely fit, and the most important ones win the ties. Everything
+    // else keeps its hover tooltip and its chip below the diagram.
+    var labelW = 8 * 5.6;   // 8-digit case number at the label font size
+    var labelH = 11;
+    var placed = [];
+    var labelled = {};
+    members
+      .slice()
+      .sort(function (a, b) { return (degree[b] || 0) - (degree[a] || 0); })
+      .forEach(function (m) {
+        var p = at[m];
+        var deg = degree[m] || 0;
+        var radius = NODE_R_MIN + (deg / maxDeg) * (NODE_R_MAX - NODE_R_MIN);
+        var box = { x1: p.x - labelW / 2, x2: p.x + labelW / 2, y1: p.y + radius + 2, y2: p.y + radius + 2 + labelH };
+        var clash = placed.some(function (q) {
+          return !(box.x2 < q.x1 || box.x1 > q.x2 || box.y2 < q.y1 || box.y1 > q.y2);
+        });
+        if (clash) return;
+        placed.push(box);
+        labelled[m] = true;
+      });
+    var labelAll = Object.keys(labelled).length === n;
+
+    var nodeSvg = members.map(function (m) {
+      var p = at[m];
+      var r = STATE.byNumber[m] || {};
+      var deg = degree[m] || 0;
+      // Radius carries connectedness, so the hub of a cluster is visibly the hub.
+      var radius = NODE_R_MIN + (deg / maxDeg) * (NODE_R_MAX - NODE_R_MIN);
+      var color = STATUS_COLOR_MAP[r.status || ""] || "var(--status-neutral)";
+      var open = r.status && !isClosed(r);
+      var showLabel = !!labelled[m];
+      return '<g class="g-node" data-open-case="' + escapeHtml(m) + '" tabindex="0">' +
+        "<title>" + escapeHtml(m + " · " + (r.subject || "(awaiting sync)") + "\n" +
+          (STATUS_LABELS[r.status || ""] || r.status || "Pending sync") + " · " + plural(deg, "link")) + "</title>" +
+        '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="' + radius.toFixed(1) +
+          '" fill="' + color + '"' + (open ? ' class="g-open"' : "") +
+          ' stroke-width="' + (open ? "2.5" : "2") + '" />' +
+        (showLabel
+          ? '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + radius + 11).toFixed(1) +
+              '" class="g-label" font-size="10" stroke-width="3">' +
+              escapeHtml(m) + "</text>"
+          : "") +
+        "</g>";
+    }).join("");
+
+    // Fit the viewBox to the drawn content: node radius on every side, plus
+    // extra at the bottom for the labels that hang below their circles.
+    var maxR = NODE_R_MAX;
+    var xs = members.map(function (m) { return at[m].x; });
+    var ys = members.map(function (m) { return at[m].y; });
+    var vx = Math.min.apply(null, xs) - maxR - 34;
+    var vy = Math.min.apply(null, ys) - maxR - 8;
+    var vw = Math.max.apply(null, xs) - Math.min.apply(null, xs) + 2 * maxR + 68;
+    var vh = Math.max.apply(null, ys) - Math.min.apply(null, ys) + 2 * maxR + 26;
+
+    return '<div class="graph-wrap">' +
+      (labelAll ? "" : '<p class="graph-note">Only the most-linked cases are labelled — hover or click any circle to identify it.</p>') +
+      '<svg class="cluster-graph" viewBox="' + vx.toFixed(1) + " " + vy.toFixed(1) + " " + vw.toFixed(1) + " " + vh.toFixed(1) +
+      '" role="img" aria-label="Diagram of ' + n + ' linked cases">' +
+      "<defs><marker id=\"garrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\">" +
+        '<path d="M 0 1 L 10 5 L 0 9 z" class="g-arrow" /></marker></defs>' +
+      edgeSvg + nodeSvg +
+      "</svg></div>";
+  }
+
   function hasAnyLink(caseNumber) {
     if (!STATE.relations) return false;
     var cn = String(caseNumber);
@@ -384,8 +773,8 @@
     if (STATE.adminPasscode) {
       STATE.adminPasscode = null;
       STATE.adminName = "";
-      sessionStorage.removeItem("f2f_admin_passcode");
-      sessionStorage.removeItem("f2f_admin_name");
+      clearStored(STORE_KEY_PASSCODE);
+      clearStored(STORE_KEY_NAME);
       setAdminUi();
       toast("Editing locked.");
       renderCurrentView();
@@ -403,8 +792,8 @@
       var result = await apiFetch(API_AUTH_CHECK, { method: "POST", body: JSON.stringify({ passcode: passcode }) });
       STATE.adminPasscode = passcode;
       STATE.adminName = result.name || "";
-      sessionStorage.setItem("f2f_admin_passcode", passcode);
-      sessionStorage.setItem("f2f_admin_name", STATE.adminName);
+      writeStored(STORE_KEY_PASSCODE, passcode);
+      writeStored(STORE_KEY_NAME, STATE.adminName);
       setAdminUi();
       unlockModal.style.display = "none";
       toast("Editing unlocked as " + (STATE.adminName || "Admin") + ".");
@@ -760,15 +1149,47 @@
     return '<div class="detail-block" style="grid-column: 1 / -1;"><h4>Related cases</h4>' + parts.join("") + "</div>";
   }
 
+  // One weekly note. Shows when it was written, and — if someone has since
+  // fixed a typo — that it was edited, without losing the original date.
+  function renderWeeklyNote(c, isAdmin) {
+    var written = c._at ? c._at.toLocaleString() : c.timestamp;
+    var editedAt = c.edited_at ? new Date(c.edited_at) : null;
+    if (editedAt && isNaN(editedAt.getTime())) editedAt = null;
+
+    if (STATE.editingComment === c.id) {
+      return '<div class="comment-item editing">' +
+        '<div class="who"><span>' + escapeHtml(c.author) + "</span><span>" + escapeHtml(written) + "</span></div>" +
+        '<textarea class="note-edit-input" data-id="' + escapeHtml(String(c.id)) + '">' + escapeHtml(c.comment) + "</textarea>" +
+        '<div class="note-edit-actions">' +
+          '<button class="btn small primary" data-action="save-comment" data-id="' + escapeHtml(String(c.id)) + '">Save</button>' +
+          '<button class="btn small" data-action="cancel-edit-comment">Cancel</button>' +
+          '<button class="btn small danger" data-action="delete-comment" data-id="' + escapeHtml(String(c.id)) + '">Delete</button>' +
+        "</div>" +
+      "</div>";
+    }
+
+    return '<div class="comment-item">' +
+      '<div class="who">' +
+        "<span>" + escapeHtml(c.author || "unknown") + "</span>" +
+        '<span class="note-when">' + escapeHtml(written) +
+          (editedAt ? ' <span class="edited-tag" title="Edited ' + escapeHtml(editedAt.toLocaleString()) + '">· edited</span>' : "") +
+          (isAdmin && c.id != null
+            ? ' <button class="note-edit-btn" data-action="edit-comment" data-id="' + escapeHtml(String(c.id)) + '" title="Fix a typo in this note">✎</button>'
+            : "") +
+        "</span>" +
+      "</div>" +
+      '<div class="txt">' + escapeHtml(c.comment) + "</div>" +
+    "</div>";
+  }
+
   function renderDetailRow(r) {
+    var isAdmin = !!STATE.adminPasscode;
     var comments = STATE.commentsByCase[r.case_number] || [];
     var commentsHtml = comments.length
-      ? comments.map(function (c) {
-          return '<div class="comment-item"><div class="who"><span>' + escapeHtml(c.author) + '</span><span>' + escapeHtml(new Date(c.timestamp).toLocaleString()) + '</span></div><div class="txt">' + escapeHtml(c.comment) + '</div></div>';
-        }).join("")
+      ? comments.map(function (c) { return renderWeeklyNote(c, isAdmin); }).join("")
       : '<p style="color:var(--text-muted); font-size:12px;">No weekly notes yet.</p>';
 
-    var isAdmin = !!STATE.adminPasscode;
+    var portal = portalUrl(r);
 
     return (
       '<tr class="detail-row"><td colspan="7">' +
@@ -785,13 +1206,22 @@
           '<span><b>Added by:</b> ' + escapeHtml(r.added_by) + '</span>' +
         '</div>' +
         '<div class="detail-actions">' +
+          // Primary action: get to the real case. Everything here is a
+          // read-only copy of the portal, so "go look at the source" is the
+          // most common thing anyone wants from a case row.
+          (portal
+            ? '<a class="btn small primary" href="' + escapeHtml(portal) + '" target="_blank" rel="noopener noreferrer">↗ Open in Q2 portal</a>'
+            : '<a class="btn small" href="' + escapeHtml(PORTAL_CASE_LIST) + '" target="_blank" rel="noopener noreferrer"' +
+              ' title="No portal record ID stored for this case yet — this opens the case list, where you can search ' + escapeHtml(r.case_number) + '. Re-syncing the case stores the direct link.">' +
+              "↗ Find on Q2 portal</a>") +
           '<button class="btn small" data-action="resync" data-case="' + escapeHtml(r.case_number) + '">🔄 Refresh from portal</button>' +
           '<button class="btn small" data-action="copy-link" data-case="' + escapeHtml(r.case_number) + '">🔗 Copy link to this case</button>' +
         '</div>' +
         '<div class="detail-grid">' +
           '<div class="detail-block"><h4>Description (auto-pulled)</h4><p>' + (escapeHtml(r.description) || '<em style="color:var(--text-muted)">Not synced yet.</em>') + '</p></div>' +
-          '<div class="detail-block"><h4>Your summary</h4><p>' + (escapeHtml(r.exec_summary) || '<em style="color:var(--text-muted)">None provided.</em>') + '</p></div>' +
-          '<div class="detail-block" style="grid-column: 1 / -1;"><h4>Raw comment thread (auto-pulled)</h4><p>' + (escapeHtml(r.raw_comments) || '<em style="color:var(--text-muted)">Not synced yet.</em>') + '</p></div>' +
+          '<div class="detail-block"><h4>Your summary <span class="muted">· typed by your team</span></h4><p>' + (escapeHtml(r.exec_summary) || '<em style="color:var(--text-muted)">None provided.</em>') + '</p></div>' +
+          '<div class="detail-block" style="grid-column: 1 / -1;"><h4>Portal comment thread (auto-pulled)</h4>' + renderPortalThread(r) + '</div>' +
+          renderAttachments(r) +
           relatedBlock(r) +
           '<div class="detail-block" style="grid-column: 1 / -1;">' +
             '<h4>Current status note (internal)' + (isAdmin ? '<button class="btn small" data-action="save-note" data-case="' + escapeHtml(r.case_number) + '">Save</button>' : '') + '</h4>' +
@@ -902,8 +1332,71 @@
         }
       });
     });
-    tbody.querySelectorAll(".note-input, .new-comment-input").forEach(function (el) {
+
+    // Portal thread expand/collapse
+    tbody.querySelectorAll("[data-action='toggle-thread']").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var cn = btn.getAttribute("data-case");
+        STATE.expandedThreads[cn] = !STATE.expandedThreads[cn];
+        renderTable();
+      });
+    });
+
+    // Weekly note editing
+    tbody.querySelectorAll("[data-action='edit-comment']").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (!requireAdmin()) return;
+        STATE.editingComment = Number(btn.getAttribute("data-id"));
+        renderTable();
+        var ta = tbody.querySelector(".note-edit-input[data-id='" + btn.getAttribute("data-id") + "']");
+        if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+      });
+    });
+    tbody.querySelectorAll("[data-action='cancel-edit-comment']").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        STATE.editingComment = null;
+        renderTable();
+      });
+    });
+    tbody.querySelectorAll("[data-action='save-comment']").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var id = btn.getAttribute("data-id");
+        var ta = tbody.querySelector(".note-edit-input[data-id='" + id + "']");
+        doEditComment(id, ta.value);
+      });
+    });
+    tbody.querySelectorAll("[data-action='delete-comment']").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var id = btn.getAttribute("data-id");
+        if (!window.confirm("Delete this weekly note? This can't be undone.")) return;
+        doDeleteComment(id);
+      });
+    });
+    tbody.querySelectorAll(".note-edit-input").forEach(function (ta) {
+      ta.addEventListener("keydown", function (e) {
+        // Enter saves, Shift+Enter makes a new line, Escape cancels.
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          doEditComment(ta.getAttribute("data-id"), ta.value);
+        } else if (e.key === "Escape") {
+          STATE.editingComment = null;
+          renderTable();
+        }
+      });
+    });
+
+    tbody.querySelectorAll(".note-input, .new-comment-input, .note-edit-input").forEach(function (el) {
       el.addEventListener("click", function (e) { e.stopPropagation(); });
+    });
+    // Anchors inside a row must not toggle the row open/closed.
+    tbody.querySelectorAll("a").forEach(function (a) {
+      a.addEventListener("click", function (e) { e.stopPropagation(); });
     });
     wireCaseChips(tbody);
   }
@@ -1095,16 +1588,27 @@
         c.edges.forEach(function (e) { degree[e.a] = (degree[e.a] || 0) + 1; degree[e.b] = (degree[e.b] || 0) + 1; });
         var members = c.members.slice().sort(function (a, b) { return (degree[b] || 0) - (degree[a] || 0); });
         var openCount = members.filter(function (m) { return STATE.byNumber[m] && !isClosed(STATE.byNumber[m]); }).length;
+        // Show the written-out link list up front only when it's short, or
+        // when there's no diagram to read the structure off instead.
+        var showEdges = !STATE.graphMode || c.edges.length <= 6 || STATE.expandedEdges[idx];
 
         return '<div class="cluster-card">' +
           '<div class="cluster-head">' +
             '<h3>Cluster ' + (idx + 1) + ' <span class="muted">· ' + plural(members.length, "case") + ", " + plural(c.edges.length, "link") + "</span></h3>" +
             '<span class="pill' + (openCount ? " reopened" : "") + '">' + (openCount ? openCount + " still open" : "all closed") + "</span>" +
           "</div>" +
+          (STATE.graphMode ? clusterDiagram(c, rel) : "") +
           '<div class="chip-row">' + members.map(function (m) {
             return caseChip(m, degree[m] > 1 ? degree[m] + " links" : null);
           }).join("") + "</div>" +
-          '<div class="edge-list">' + c.edges.map(function (e) {
+          // With a diagram above, a 44-row list of every link is noise by
+          // default — but it's the only place the exact relationship is
+          // spelled out in words, so it stays one click away.
+          (showEdges
+            ? ""
+            : '<button class="btn small edge-toggle" data-expand-edges="' + idx + '">▸ List all ' +
+                plural(c.edges.length, "link") + " in words</button>") +
+          '<div class="edge-list"' + (showEdges ? "" : ' style="display:none;"') + ">" + c.edges.map(function (e) {
             var aMentionsB = (rel.mentions[e.a] || []).indexOf(e.b) !== -1;
             var bMentionsA = (rel.mentions[e.b] || []).indexOf(e.a) !== -1;
             var how = [];
@@ -1125,6 +1629,13 @@
           "</div>";
       }).join("");
     }
+    clustersEl.querySelectorAll("[data-expand-edges]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var key = btn.getAttribute("data-expand-edges");
+        STATE.expandedEdges[key] = !STATE.expandedEdges[key];
+        renderRelated();
+      });
+    });
     wireCaseChips(clustersEl);
 
     // Case numbers our cases cite that aren't in the tracker at all — each one
@@ -1150,6 +1661,13 @@
   relatedLinkType.addEventListener("change", renderRelated);
   document.getElementById("relatedReset").addEventListener("click", function () {
     relatedSearch.value = ""; relatedLinkType.value = "all";
+    renderRelated();
+  });
+  var graphToggle = document.getElementById("graphToggle");
+  graphToggle.classList.toggle("active", STATE.graphMode);
+  graphToggle.addEventListener("click", function () {
+    STATE.graphMode = !STATE.graphMode;
+    graphToggle.classList.toggle("active", STATE.graphMode);
     renderRelated();
   });
 
@@ -1307,6 +1825,53 @@
       await loadData();
     } catch (err) { toast(err.message, true); }
   }
+  async function doEditComment(id, text) {
+    text = (text || "").trim();
+    if (!text) { toast("A note can't be empty — use Delete to remove it.", true); return; }
+    if (!requireAdmin()) return;
+    try {
+      await apiFetch(API_COMMENTS, { method: "PATCH", auth: true, body: JSON.stringify({ id: Number(id), comment: text }) });
+      STATE.editingComment = null;
+      toast("Note updated.");
+      await loadData();
+    } catch (err) { toast(err.message, true); }
+  }
+  async function doDeleteComment(id) {
+    if (!requireAdmin()) return;
+    try {
+      await apiFetch(API_COMMENTS, { method: "DELETE", auth: true, body: JSON.stringify({ id: Number(id) }) });
+      STATE.editingComment = null;
+      toast("Note deleted.");
+      await loadData();
+    } catch (err) { toast(err.message, true); }
+  }
+
+  // ---------- Sync all ----------
+  async function doSyncAll() {
+    if (!requireAdmin()) return;
+    var open = STATE.cases.filter(function (r) { return !isClosed(r); }).length;
+    if (!window.confirm(
+      "Re-pull all " + STATE.cases.length + " cases from the Q2 portal?\n\n" +
+      "This starts one GitHub Actions run that works through every case, closed ones " +
+      "included, and usually takes several minutes. The " + open + " open cases will show " +
+      "as queued until it finishes."
+    )) return;
+    var btn = document.getElementById("syncAllBtn");
+    btn.disabled = true;
+    var original = btn.innerHTML;
+    btn.innerHTML = "⏳ Queueing…";
+    try {
+      var res = await apiFetch(API_SYNC_ALL, { method: "POST", auth: true, body: "{}" });
+      toast("Full refresh queued for " + plural(res.queued, "case") + " — this takes a few minutes.");
+      await loadData();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
+  }
+  document.getElementById("syncAllBtn").addEventListener("click", doSyncAll);
 
   // ---------- CSV export ----------
   function csvCell(v) {

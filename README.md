@@ -36,23 +36,45 @@ note in `scripts/scrape.js`).
   headless-browser job: no cold-start binary size limits, generous timeouts,
   and your Q2 login only ever needs to live in GitHub Secrets.
 
-## What's automatic vs. manual (by design)
+## Where each field comes from — and what "Your summary" is
 
-You asked for "paste a summary, everything else auto-pulls." Concretely:
+Worth being explicit, because it's the one field people assume is generated:
 
 | Field | Source |
 |---|---|
-| Subject, Status, Priority, Urgency, Product/Category, Type, Origin, Owner, Contact, Account, Dates, Description, raw comment thread | **Auto-pulled** from the portal by the scraper |
-| Exec summary | **You type it** when adding the case |
-| Current status note | **You edit it** any time (the one field the scraper never overwrites) |
-| Weekly sync-up notes | **You add one per Wednesday sync**, timestamped, never overwritten |
+| Subject, Description, Status, Priority, dates, Owner, Contact, Account, Product | Scraped from the Q2 portal by `scripts/scrape.js` |
+| Portal comment thread, Attachments | Scraped from the portal, split into individual entries by `parseCaseText.js` |
+| **Your summary** (`exec_summary`) | **Typed by a person.** Whatever you enter in the "+ Add case" box, nothing more |
+| Current status note | Typed by a person, edited in the case panel |
+| Weekly sync-up notes | Typed by a person, in the case panel |
+| Related cases | Derived in the browser from the scraped text (see below) |
 
-The scraper does not attempt to write `case_fix` / `case_discussion`-style
-AI summaries — that was done by hand (with an LLM in the loop) for the
-original 115 cases and isn't something an unattended script can respons­ibly
-replicate. If you want that later, the natural place to add it is inside
-`scripts/scrape.js`, calling the Anthropic API with the scraped comment
-thread — happy to wire that up as a follow-up.
+**There is no AI or summarisation anywhere in this app.** Nothing reads the
+description and writes a summary for you. When you add a case, the summary is
+exactly the sentence or two you type; leave it blank and it stays blank.
+
+The 115 seeded cases in `data/seed-cases.json` are the exception, and they are
+why this looks ambiguous: their summaries were written during the original
+one-off data-gathering pass that built that file (reading each case by hand /
+with model assistance) and imported into `exec_summary`. That was a one-time
+import, not a feature — no code in this repo reproduces it. So a case you add
+today gets no summary unless you write one.
+
+The same goes for the `case_fix` / `case_discussion` write-ups in the seed
+file: those were produced by hand with a model in the loop, and no unattended
+script here reproduces them. They're folded into the raw comment text on
+import.
+
+If you *want* generated summaries, that's a genuine feature to add, not a
+setting to flip: it needs an API key for a model provider, a call in
+`scripts/scrape.js` after `parseCaseText`, and a decision about whether the
+output overwrites `exec_summary` or lands in a separate field so your own
+wording is never clobbered. Say the word and it's a small change.
+
+Everything else on a case — status, priority, dates, owner, contact, account,
+product, description, the comment thread, attachments — is overwritten by the
+scraper on every sync. The three human fields (your summary, the current
+status note, the weekly notes) are never touched by it.
 
 ## Reopened cases
 
@@ -146,6 +168,25 @@ candidate to add, with the citing case shown.
 In the Cases tab, a **🔗 n** badge on each row shows its link count, and the
 **🔗 Linked** filter narrows to cases that have any.
 
+Each cluster is drawn as a **diagram** (toggle with **◉ Diagram**):
+
+- A **solid line with an arrowhead** is a mention, pointing at the case being
+  cited. Blue means they cite each other.
+- A **dashed green line** is a shared loan account / transaction — neither case
+  points at the other, so it has no direction.
+- **Circle size** is the number of links, so the hub of a cluster — usually the
+  root-cause case everything else points at — is visibly the hub. An amber ring
+  means still open.
+- Click any circle to open that case. Hover for its subject and status.
+
+The layout is a small force-directed simulation computed in the browser (no
+charting library, nothing loaded from a CDN). It's deterministic — the same
+cluster always draws the same way — and each cluster is rotated so its longest
+axis runs horizontally, which is why a chain of cases reads left-to-right
+instead of diagonally. Past a certain density not every circle can be
+labelled without the numbers colliding, so labels go to as many as fit,
+most-connected first; the rest are identified by hover and by the chips below.
+
 ### Sync health — did the last pull succeed or fail
 
 Every case records the outcome of its last portal pull, not just a "pending"
@@ -172,6 +213,41 @@ buried in the Actions log), and a GitHub dispatch that never fires because
 
 ## Other additions
 
+- **Link straight to the real case.** Every case panel opens with **↗ Open in
+  Q2 portal**. This needs the case's Salesforce record ID, which the scraper
+  now stores (`portal_record_id`) — the case number alone can't address a page
+  on the portal. Cases that haven't been scraped since this change show
+  **↗ Find on Q2 portal** instead, which opens the case list to search; one
+  "🔄 Refresh from portal" turns it into a direct link. If your community
+  routes record pages somewhere other than `/{recordId}/view`, change
+  `PORTAL_CASE_PATH` in `site/app.js` — it's one line.
+- **Portal comment thread, split up.** The thread used to be one pre-wrapped
+  text blob, which for a busy case is an unreadable wall. `parseCaseText.js`
+  now splits it into individual comments (timestamp, author, body), and the
+  panel shows the newest 3 with "Show all N comments" — tested against a
+  100-comment case. The per-comment "Case Number: …" mail footer is stripped.
+  The original 115 seeded cases keep their hand-written "FIX:/DISCUSSION:"
+  text as a fallback until re-synced.
+- **Attachments.** Filenames and sizes are parsed from the portal page, with
+  images (including pasted `image-<date>-<time>` screenshots) badged 🖼. The
+  scraper also tries to read real download URLs out of the live DOM; where it
+  gets one the chip links straight to the file, and where it doesn't the chip
+  opens the case on the portal, whose Attachments section holds the file. You
+  need to be signed in to the portal either way — these are authenticated
+  Salesforce links, so the images can't be embedded in the dashboard itself.
+- **Sync all.** A top-bar button fires one Actions run that re-scrapes every
+  case, instead of waiting for the Wednesday cron. Deliberately one dispatch
+  for the whole set, not 115 — that would be rate-limited and would start 115
+  runners. The workflow has a `concurrency` group so two full syncs can't
+  overlap and race each other's writes.
+- **Weekly notes are editable.** Each note shows when it was written; ✎ fixes a
+  typo. Editing stamps `edited_at` and shows "· edited" (hover for when)
+  without touching the original date, so history isn't silently rewritten.
+  Notes can also be deleted. Enter saves, Shift+Enter adds a line, Esc cancels.
+- **Login persists.** The passcode is kept in `localStorage` rather than
+  `sessionStorage`, so closing the browser no longer logs you out. It's a
+  shared internal passcode on an internal tool; "🔒 Admin" still logs out
+  explicitly, and anyone mid-session is migrated across automatically.
 - **Ageing.** The table's last column is now **Age** — days open for an open
   case, days-to-close for a closed one. Open cases past 90 days are
   highlighted, with an **⏳ Ageing** filter and tiles for the ageing count,
@@ -188,7 +264,8 @@ buried in the Actions log), and a GitHub dispatch that never fires because
 
 ```
 site/                   Static frontend — index.html, styles.css, app.js
-netlify/functions/      API: cases.js, case-update.js, comments.js, auth-check.js
+netlify/functions/      API: cases.js, case-update.js, comments.js, auth-check.js, sync-all.js
+netlify/functions/_dispatch.js  Shared GitHub repository_dispatch caller + error explanations
 lib/schema.js           Shared case/comment column list, used by every backend
 lib/turso.js            Turso (libSQL) backend — the default, fully-free path
 lib/graphExcel.js       Legacy: Microsoft Graph <-> Excel table adapter (optional)
@@ -257,11 +334,47 @@ In your GitHub repo, **Settings > Secrets and variables > Actions**, add:
 | `TURSO_DATABASE_URL` | from step 1 |
 | `TURSO_AUTH_TOKEN` | from step 1 |
 
-Also create a **fine-grained personal access token** (Settings > Developer
-settings > Personal access tokens) scoped only to this repo, with
-**Actions: Read and write** permission — this is what lets the live site
-trigger a scrape when someone clicks "Add case." You'll paste this into
-Netlify as `GITHUB_DISPATCH_TOKEN` (next step), not into GitHub itself.
+Also create a **personal access token** (Settings > Developer settings >
+Personal access tokens) — this is what lets the live site trigger a scrape when
+someone clicks "Add case", "Refresh from portal" or "Sync all". You'll paste it
+into Netlify as `GITHUB_DISPATCH_TOKEN` (next step), not into GitHub itself.
+
+The permission it needs is **Contents: Read and write**:
+
+- **Fine-grained token** — set *Repository access* to this repository, then
+  under *Repository permissions* set **Contents** to *Read and write*.
+- **Classic token** — tick the **`repo`** scope.
+
+⚠️ **Not "Actions: Read and write".** The dashboard triggers workflows through
+the `POST /repos/{owner}/{repo}/dispatches` endpoint, and GitHub gates that on
+the **Contents** permission, not Actions — which is counter-intuitive, since
+what it starts is an Actions run. A token with only Actions permission
+authenticates fine and then gets **403** on every dispatch. (Earlier versions
+of this README said Actions; if you set that up, edit the token's permissions
+and re-save it — you don't need a new token.)
+
+#### If you see "GitHub dispatch failed (403)"
+
+The dashboard shows the full reason under **Sync health**, and the fix is
+almost always the permission above. Working through it in order:
+
+1. **Contents: Read and write** on the token (see the warning above) — this is
+   the common cause.
+2. For a fine-grained token, *this specific repository* must be listed under
+   its **Repository access**. A token restricted to other repos gets 403 here.
+3. `GITHUB_REPO` in Netlify must be `owner/repo` (e.g.
+   `md-sameer-ck/SymphonixSupportTracker`) and must be a repo the token's owner
+   can write to. A token belonging to a different GitHub account than the repo
+   owner won't work, even with the right scopes — worth checking if you have
+   more than one GitHub identity.
+4. The token hasn't expired. Fine-grained tokens default to 30 days.
+5. If the repo lives in an organisation with SSO, the token must be authorised
+   for that org.
+
+A 401 instead means the token is invalid or revoked; a 404 means `GITHUB_REPO`
+is wrong or the token can't see the repo (GitHub returns 404, not 403, for
+private repos a token has no access to). Each of these is reported with its own
+explanation on the dashboard rather than a bare status code.
 
 **Test the scraper before relying on it:** go to the Actions tab, run
 "Scrape one case from Q2 portal" manually (`workflow_dispatch`) with a known

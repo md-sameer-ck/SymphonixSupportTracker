@@ -242,3 +242,77 @@ td.empty { text-align: center; color: var(--text-muted); padding: 26px 12px; }
 .fail-reason { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-secondary); word-break: break-word; }
 .fail-card .btn { margin-top: 9px; }
 td.reason-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-secondary); max-width: 320px; word-break: break-word; }
+
+/* ---------- Cluster diagram ---------- */
+.graph-legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 11px; color: var(--text-muted); margin: 0 0 14px; align-items: center; }
+.graph-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.lg-line { width: 22px; height: 0; border-top: 1.6px solid var(--text-secondary); display: inline-block; }
+.lg-line.dashed { border-top-style: dashed; }
+.lg-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--status-neutral); display: inline-block; }
+.lg-dot.ring { background: var(--status-warning); box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--status-warning) 35%, transparent); }
+.graph-wrap { margin: 10px 0 4px; overflow-x: auto; }
+.cluster-graph { width: 100%; min-width: 460px; height: auto; max-height: 70vh; display: block; }
+/* Geometry (stroke-width, dash, font-size) is set as scaled presentation
+   attributes in app.js so a large cluster's nodes and labels still render at a
+   sensible pixel size. CSS must therefore only carry colour here — a
+   stroke-width or font-size rule would override the attribute and undo it. */
+.g-edge { stroke: var(--baseline); }
+.g-edge.mutual { stroke: var(--series-1); }
+.g-edge.entity { stroke: var(--series-3); }
+.g-arrow { fill: var(--baseline); }
+.g-node { cursor: pointer; }
+.g-node circle { stroke: var(--surface-1); }
+.g-node circle.g-open { stroke: var(--status-warning); }
+.g-node:hover circle, .g-node:focus circle { stroke: var(--text-primary); }
+.g-node:focus { outline: none; }
+.g-label {
+  fill: var(--text-secondary); text-anchor: middle; font-variant-numeric: tabular-nums;
+  pointer-events: none; font-family: system-ui, sans-serif;
+  /* Halo in the card colour so a label crossing an edge stays legible. */
+  paint-order: stroke; stroke: var(--surface-1); stroke-linejoin: round;
+}
+.g-node:hover .g-label { fill: var(--text-primary); font-weight: 600; }
+.filters button#graphToggle.active { background: var(--series-1); color: #fff; border-color: transparent; }
+
+/* ---------- Portal comment thread ---------- */
+.thread-meta { font-size: 11px; color: var(--text-muted); margin-bottom: 7px; }
+.thread { display: flex; flex-direction: column; gap: 8px; margin-bottom: 9px; }
+.thread-item { background: var(--surface-1); border: 1px solid var(--border); border-left: 2.5px solid var(--seq-250); border-radius: 0 8px 8px 0; padding: 9px 12px; }
+.thread-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px; font-size: 11px; flex-wrap: wrap; }
+.thread-author { font-weight: 600; color: var(--text-primary); }
+.thread-when { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.thread-text { font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; }
+.thread-fallback { font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; margin: 0 0 8px; }
+.thread-hint { font-size: 11px; color: var(--text-muted); margin: 6px 0 0; line-height: 1.45; }
+
+/* ---------- Attachments ---------- */
+.attach-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 2px; }
+.attach-chip {
+  display: inline-flex; align-items: center; gap: 6px; background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 7px; padding: 5px 10px; font-size: 11.5px;
+  color: var(--text-secondary); text-decoration: none; max-width: 100%;
+}
+a.attach-chip:hover { border-color: var(--series-1); color: var(--text-primary); }
+.attach-chip.disabled { opacity: 0.6; cursor: default; }
+
+/* ---------- Weekly note editing ---------- */
+.comment-item .note-when { display: inline-flex; align-items: center; gap: 5px; }
+.edited-tag { color: var(--text-muted); font-style: italic; }
+.note-edit-btn {
+  background: transparent; border: none; cursor: pointer; color: var(--text-muted);
+  font-size: 12px; padding: 0 2px; line-height: 1; font-family: inherit;
+}
+.note-edit-btn:hover { color: var(--series-1); }
+.comment-item.editing { border-color: var(--series-1); }
+textarea.note-edit-input {
+  width: 100%; min-height: 58px; font-family: inherit; font-size: 12.5px; margin-top: 5px;
+  background: var(--page-plane); border: 1px solid var(--border); border-radius: 6px;
+  padding: 7px 9px; color: var(--text-primary); resize: vertical;
+}
+.note-edit-actions { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.btn.danger { color: var(--status-critical); border-color: color-mix(in srgb, var(--status-critical) 40%, var(--border)); }
+.btn.danger:hover { background: color-mix(in srgb, var(--status-critical) 10%, transparent); color: var(--status-critical); }
+a.btn { text-decoration: none; }
+a.btn.primary:hover { color: #fff; }
+.graph-note { font-size: 11px; color: var(--text-muted); margin: 0 0 4px; }
+.edge-toggle { margin-top: 8px; }
