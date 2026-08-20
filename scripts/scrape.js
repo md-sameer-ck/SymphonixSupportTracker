@@ -98,8 +98,26 @@ async function scrapeOne(page, caseNumber) {
     ...parsed,
     sync_status: "synced",
     last_synced_at: new Date().toISOString(),
+    sync_error: "", // cleared on success so a fixed case stops showing as failed
   });
   console.log(`Synced ${caseNumber}: ${parsed.subject}`);
+}
+
+// Records the failure on the case itself, so the dashboard can show *why* a
+// sync failed instead of leaving the row on "pending" indefinitely. Best
+// effort: if the store write itself fails there's nowhere left to report to,
+// so just log it and let the original error surface.
+async function recordFailure(caseNumber, err) {
+  console.error(`Failed to sync ${caseNumber}: ${err.message}`);
+  try {
+    await graph.upsertCase(caseNumber, {
+      sync_status: "error",
+      sync_error: err.message,
+      last_synced_at: new Date().toISOString(),
+    });
+  } catch (writeErr) {
+    console.error(`Could not record the failure for ${caseNumber}: ${writeErr.message}`);
+  }
 }
 
 async function main() {
@@ -122,12 +140,19 @@ async function main() {
         try {
           await scrapeOne(page, c.case_number);
         } catch (err) {
-          console.error(`Failed to sync ${c.case_number}: ${err.message}`);
-          await graph.upsertCase(c.case_number, { sync_status: "error" });
+          await recordFailure(c.case_number, err);
         }
       }
     } else {
-      await scrapeOne(page, arg);
+      // Single-case runs record the failure too, then rethrow so the Actions
+      // run still goes red. Without this a failed scrape left the case on
+      // "pending" forever, with the reason buried in the workflow log.
+      try {
+        await scrapeOne(page, arg);
+      } catch (err) {
+        await recordFailure(arg, err);
+        throw err;
+      }
     }
   } finally {
     await browser.close();

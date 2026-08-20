@@ -66,6 +66,12 @@ exports.handler = async (event) => {
       });
 
       const dispatch = await triggerScrape(caseNumber);
+      // A failed dispatch means nothing will ever fill this case in, so it's
+      // a sync failure — record it rather than leaving the row on "pending"
+      // with no explanation on the dashboard.
+      if (!dispatch.dispatched) {
+        await graph.upsertCase(caseNumber, { sync_status: "error", sync_error: dispatch.reason });
+      }
       return json(201, { ok: true, case_number: caseNumber, dispatch });
     }
 

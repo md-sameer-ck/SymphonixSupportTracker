@@ -48,7 +48,15 @@ exports.handler = async (event) => {
 
     if (isResync || event.httpMethod === "POST") {
       const dispatch = await triggerScrape(caseNumber);
-      await graph.upsertCase(caseNumber, { sync_status: "pending" });
+      // Only mark it pending if the scrape was actually queued. If the
+      // dispatch failed, nothing is coming — surface that as the sync error
+      // so it shows up under Sync health instead of spinning on "pending".
+      await graph.upsertCase(
+        caseNumber,
+        dispatch.dispatched
+          ? { sync_status: "pending", sync_error: "" }
+          : { sync_status: "error", sync_error: dispatch.reason }
+      );
       return json(200, { ok: true, dispatch });
     }
 

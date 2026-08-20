@@ -25,49 +25,132 @@
 
   <div class="sync-banner" id="syncBanner" style="display:none;"></div>
 
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="cases">Cases</button>
+    <button class="tab" data-view="activity">Activity <span class="tab-count" id="tabCountActivity"></span></button>
+    <button class="tab" data-view="related">Related cases <span class="tab-count" id="tabCountRelated"></span></button>
+    <button class="tab" data-view="sync">Sync health <span class="tab-count" id="tabCountSync"></span></button>
+  </nav>
+
   <div class="tiles" id="tiles"></div>
 
-  <div class="charts">
-    <div class="chart-card">
-      <p class="chart-title">Cases by status</p>
-      <div id="chartStatus"></div>
+  <!-- ===================== Cases view ===================== -->
+  <section class="view" id="view-cases">
+    <div class="charts">
+      <div class="chart-card">
+        <p class="chart-title">Cases by status</p>
+        <div id="chartStatus"></div>
+      </div>
+      <div class="chart-card">
+        <p class="chart-title">Cases by priority</p>
+        <div id="chartPriority"></div>
+      </div>
+      <div class="chart-card">
+        <p class="chart-title">Cases by product category</p>
+        <div id="chartCategory"></div>
+      </div>
     </div>
-    <div class="chart-card">
-      <p class="chart-title">Cases by priority</p>
-      <div id="chartPriority"></div>
-    </div>
-    <div class="chart-card">
-      <p class="chart-title">Cases by product category</p>
-      <div id="chartCategory"></div>
-    </div>
-  </div>
 
-  <div class="filters">
-    <input type="search" id="searchInput" placeholder="Search subject, description, notes…">
-    <select id="statusFilter"><option value="">All statuses</option></select>
-    <select id="priorityFilter"><option value="">All priorities</option></select>
-    <select id="categoryFilter"><option value="">All categories</option></select>
-    <button id="syncFilterToggle">🗓 Needs sync-up</button>
-    <button id="resetFilters">Reset</button>
-  </div>
-  <p class="result-count"><span id="resultCount"></span><span id="refreshHint" style="cursor:pointer;">↻ Refresh</span></p>
+    <div class="filters">
+      <input type="search" id="searchInput" placeholder="Search subject, description, notes…">
+      <select id="statusFilter"><option value="">All statuses</option></select>
+      <select id="priorityFilter"><option value="">All priorities</option></select>
+      <select id="categoryFilter"><option value="">All categories</option></select>
+      <button id="syncFilterToggle">🗓 Needs sync-up</button>
+      <button id="agedFilterToggle" title="Open cases that have been running for more than 90 days">⏳ Ageing</button>
+      <button id="linkedFilterToggle" title="Cases that reference, or are referenced by, another case">🔗 Linked</button>
+      <button id="resetFilters">Reset</button>
+    </div>
+    <p class="result-count">
+      <span id="resultCount"></span>
+      <span class="result-actions">
+        <span id="exportCsv" class="link-action">⭳ Export CSV</span>
+        <span id="refreshHint" class="link-action">↻ Refresh</span>
+      </span>
+    </p>
 
-  <div class="table-card">
-    <table>
-      <thead>
-        <tr>
-          <th data-key="case_number">Case # <span class="arrow"></span></th>
-          <th data-key="subject">Subject <span class="arrow"></span></th>
-          <th data-key="status">Status <span class="arrow"></span></th>
-          <th data-key="priority">Priority <span class="arrow"></span></th>
-          <th data-key="product_category">Category <span class="arrow"></span></th>
-          <th data-key="date_opened">Opened <span class="arrow"></span></th>
-          <th data-key="date_closed">Closed <span class="arrow"></span></th>
-        </tr>
-      </thead>
-      <tbody id="tbody"></tbody>
-    </table>
-  </div>
+    <div class="table-card">
+      <table>
+        <thead>
+          <tr>
+            <th data-key="case_number">Case # <span class="arrow"></span></th>
+            <th data-key="subject">Subject <span class="arrow"></span></th>
+            <th data-key="status">Status <span class="arrow"></span></th>
+            <th data-key="priority">Priority <span class="arrow"></span></th>
+            <th data-key="product_category">Category <span class="arrow"></span></th>
+            <th data-key="date_opened">Opened <span class="arrow"></span></th>
+            <th data-key="age_days">Age <span class="arrow"></span></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== Activity view ===================== -->
+  <section class="view" id="view-activity" style="display:none;">
+    <div class="panel-head">
+      <div>
+        <h2>All sync-up notes</h2>
+        <p class="panel-sub" id="activitySummary">—</p>
+      </div>
+    </div>
+    <div class="filters">
+      <input type="search" id="activitySearch" placeholder="Search every note…">
+      <select id="activityAuthor"><option value="">All authors</option></select>
+      <select id="activityRange">
+        <option value="">All time</option>
+        <option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option>
+        <option value="90">Last 90 days</option>
+      </select>
+      <button id="activityReset">Reset</button>
+    </div>
+    <div id="activityDigest" class="digest-grid"></div>
+    <div id="activityFeed" class="feed"></div>
+  </section>
+
+  <!-- ===================== Related cases view ===================== -->
+  <section class="view" id="view-related" style="display:none;">
+    <div class="panel-head">
+      <div>
+        <h2>Related cases</h2>
+        <p class="panel-sub">
+          Links are detected automatically from case text — one case quoting another's number, or two
+          cases touching the same loan account / transaction ID. Nothing to maintain by hand.
+        </p>
+      </div>
+    </div>
+    <div class="filters">
+      <input type="search" id="relatedSearch" placeholder="Filter clusters by case number or subject…">
+      <select id="relatedLinkType">
+        <option value="all">All link types</option>
+        <option value="mention">Case-number mentions only</option>
+        <option value="entity">Shared loan account / transaction only</option>
+      </select>
+      <button id="relatedReset">Reset</button>
+    </div>
+    <div id="relatedStats" class="digest-grid"></div>
+    <div id="relatedClusters"></div>
+    <div id="relatedUntracked"></div>
+  </section>
+
+  <!-- ===================== Sync health view ===================== -->
+  <section class="view" id="view-sync" style="display:none;">
+    <div class="panel-head">
+      <div>
+        <h2>Sync health</h2>
+        <p class="panel-sub">
+          Every case's last pull from the Q2 portal — whether it succeeded, when, and the exact reason
+          if it failed. Failures are retryable from here.
+        </p>
+      </div>
+      <button class="btn small" id="retryAllFailed">🔄 Retry all failed</button>
+    </div>
+    <div id="syncStats" class="digest-grid"></div>
+    <div id="syncFailures"></div>
+    <div id="syncTable"></div>
+  </section>
 
   <footer>Folk2Folk internal tool · data sourced from the Q2 Customer Portal</footer>
 
